@@ -39,6 +39,10 @@ func (pm protocolMessage) Data() []byte {
 
 type swarm struct {
 	started uint32
+	bootErr error
+	bootChan chan struct{}
+	gossipErr error
+	gossipC chan struct{}
 
 	config config.Config
 
@@ -60,6 +64,22 @@ type swarm struct {
 
 	// Shutdown the loop
 	shutdown chan struct{} // local request to kill the swarm from outside. e.g when local node is shutting down
+}
+
+func (s *swarm) waitForBoot() error {
+	_, ok := <-s.bootChan
+	if !ok {
+		return s.bootErr
+	}
+	return nil
+}
+
+func (s *swarm) waitForGossip() error {
+	_, ok := <-s.gossipC
+	if !ok {
+		return s.gossipErr
+	}
+	return nil
 }
 
 // newSwarm creates a new P2P instance
@@ -90,6 +110,8 @@ func newSwarm(config config.Config, newNode bool, persist bool) (*swarm, error) 
 	s := &swarm{
 		config:           config,
 		lNode:            l,
+		bootChan:	make(chan struct{}),
+		gossipC:	make(chan struct{}),
 		protocolHandlers: make(map[string]chan service.Message),
 		network:          n,
 		cPool:            connectionpool.NewConnectionPool(n, l.PublicKey()),
@@ -118,21 +140,29 @@ func (s *swarm) Start() error {
 	go s.checkTimeDrifts()
 
 	if s.config.SwarmConfig.Bootstrap {
-		b := time.Now()
-		err := s.dht.Bootstrap()
-		if err != nil {
-			s.Shutdown()
-			return err
-		}
-
-		s.lNode.Info("DHT Bootstrapped with %d peers in %v", s.dht.Size(), time.Since(b))
+		go func() {
+			b := time.Now()
+			err := s.dht.Bootstrap()
+			if err != nil {
+				s.bootErr = err
+				s.Shutdown()
+			}
+			close(s.bootChan)
+			s.lNode.Info("DHT Bootstrapped with %d peers in %v", s.dht.Size(), time.Since(b))
+		}()
 	}
 
-	if s.config.SwarmConfig.Bootstrap {
-		s.gossip.Start()
-	} else {
-		go s.gossip.Start() // todo handle error async
-	} // gossip flag
+	go func() {
+		if s.config.SwarmConfig.Bootstrap {
+			s.waitForBoot()
+		}
+		err := s.gossip.Start()
+		if err != nil {
+			s.gossipErr = err
+			s.Shutdown()
+		}
+		close(s.gossipC)
+	}() // todo handle error async
 
 	return nil
 }
