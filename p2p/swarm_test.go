@@ -15,13 +15,16 @@ import (
 	"github.com/spacemeshos/go-spacemesh/p2p/pb"
 	"github.com/spacemeshos/go-spacemesh/p2p/timesync"
 	"github.com/stretchr/testify/assert"
+	"github.com/spacemeshos/go-spacemesh/p2p/service"
+	"fmt"
+	"math/rand"
 )
 
 func p2pTestInstance(t testing.TB, config config.Config) *swarm {
 	port, err := node.GetUnboundedPort()
 	assert.NoError(t, err, "Error getting a port", err)
 	config.TCPPort = port
-	p, err := newSwarm(config, false)
+	p, err := newSwarm(config, true)//false)
 	assert.NoError(t, err, "Error creating p2p stack, err: %v", err)
 	return p
 }
@@ -164,33 +167,120 @@ func TestSwarm_SignAuth(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+func RandString(n int) string {
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = letters[rand.Intn(len(letters))]
+	}
+	return string(b)
+}
+
+func sendDirectMessage(t *testing.T, sender *swarm, recvPub string, inChan chan service.Message) {
+	//payload := []byte(RandString(10))
+	payload := []byte(examplePayload)
+	err := sender.SendMessage(recvPub, exampleProtocol, payload)
+	assert.NoError(t, err)
+	select {
+	case msg := <-inChan:
+		//assert.Equal(t, msg.Data(), payload)
+		//assert.Equal(t, msg.Sender().String(), sender.lNode.String())
+		fmt.Println("GOT ", string(msg.Data()[:]))
+		break
+	case <-time.After(1 * time.Second):
+		t.Error("Took too much time to recieve")
+	}
+}
+
 func TestSwarm_RoundTrip(t *testing.T) {
-	t.Skip()
+	//t.Skip()
+	rand.Seed(time.Now().UnixNano())
+
 	p1 := p2pTestInstance(t, config.DefaultConfig())
 	p2 := p2pTestInstance(t, config.DefaultConfig())
 
-	exchan := p1.RegisterProtocol(exampleProtocol)
-
-	assert.Equal(t, exchan, p1.protocolHandlers[exampleProtocol])
+	exchan1 := p1.RegisterProtocol(exampleProtocol)
+	assert.Equal(t, exchan1, p1.protocolHandlers[exampleProtocol])
+	exchan2 := p2.RegisterProtocol(exampleProtocol)
+	assert.Equal(t, exchan2, p2.protocolHandlers[exampleProtocol])
 
 	err := p2.SendMessage(p1.lNode.String(), exampleProtocol, []byte(examplePayload))
-
 	assert.Error(t, err, "ERR") // should'nt be in routing table
-
 	p2.dht.Update(p1.lNode.Node)
 
-	err = p2.SendMessage(p1.lNode.String(), exampleProtocol, []byte(examplePayload))
+	//sendDirectMessage(t, p2, p1.localNode().String(), exchan1)
+	//sendDirectMessage(t, p1, p2.localNode().String(), exchan2)
 
+	//rand.Seed(time.Now().UnixNano())
+	for i := 0; i < 200; i++ {
+		//r := rand.Int31n(2)
+		//if r == 0 {
+			go sendDirectMessage(t, p2, p1.localNode().String(), exchan1)
+			//time.Sleep(100 * time.Millisecond)
+		//} else {
+		//	go sendDirectMessage(t, p1, p2.localNode().String(), exchan2)
+		//}
+	}
+	time.Sleep(2 * time.Second)
+}
+
+func TestSwarm_RoundTrip2(t *testing.T) {
+	//t.Skip()
+	p1 := p2pTestInstance(t, config.DefaultConfig())
+	p2 := p2pTestInstance(t, config.DefaultConfig())
+
+	exchan1 := p1.RegisterProtocol(exampleProtocol)
+	assert.Equal(t, exchan1, p1.protocolHandlers[exampleProtocol])
+	exchan2 := p2.RegisterProtocol(exampleProtocol)
+	assert.Equal(t, exchan2, p2.protocolHandlers[exampleProtocol])
+
+	err := p2.SendMessage(p1.lNode.String(), exampleProtocol, []byte(examplePayload))
+	assert.Error(t, err, "ERR") // should'nt be in routing table
+	p2.dht.Update(p1.lNode.Node)
+
+	e1, conn1, msg1 := p2.SendMessageTest(p1.localNode().String(), exampleProtocol, []byte(examplePayload))
+	assert.NoError(t, e1)
+
+	e2, conn2, msg2 := p2.SendMessageTest(p1.localNode().String(), exampleProtocol, []byte(examplePayload))
+	assert.NoError(t, e2)
+
+	conn1.Send(msg1)
 	select {
-	case msg := <-exchan:
+	case msg := <-exchan1:
 		assert.Equal(t, msg.Data(), []byte(examplePayload))
-
 		assert.Equal(t, msg.Sender().String(), p2.lNode.String())
+		fmt.Println("GOT ", string(msg.Data()[:]))
 		break
 	case <-time.After(1 * time.Second):
-		t.Error("Took to much time to recieve")
+		t.Error("Took too much time to recieve")
 	}
 
+	conn2.Send(msg2)
+	select {
+	case msg := <-exchan1:
+		assert.Equal(t, msg.Data(), []byte(examplePayload))
+		assert.Equal(t, msg.Sender().String(), p2.lNode.String())
+		fmt.Println("GOT ", string(msg.Data()[:]))
+		break
+	case <-time.After(1 * time.Second):
+		t.Error("Took too much time to recieve")
+	}
+
+	//sendDirectMessage(t, p2, p1.localNode().String(), exchan1)
+	//sendDirectMessage(t, p1, p2.localNode().String(), exchan2)
+	//
+	////rand.Seed(time.Now().UnixNano())
+	//for i := 0; i < 20; i++ {
+	//	//r := rand.Int31n(2)
+	//	//if r == 0 {
+	//	go sendDirectMessage(t, p2, p1.localNode().String(), exchan1)
+	//	//time.Sleep(100 * time.Millisecond)
+	//	//} else {
+	//	//	go sendDirectMessage(t, p1, p2.localNode().String(), exchan2)
+	//	//}
+	//}
+	time.Sleep(1 * time.Second)
 }
 
 func Test_newProtocolMessageMeatadata(t *testing.T) {
@@ -317,4 +407,95 @@ func TestSwarm_onRemoteClientMessage(t *testing.T) {
 	err = p.onRemoteClientMessage(imc)
 
 	assert.NoError(t, err)
+}
+
+func TestSession(t *testing.T) {
+	type sp struct {
+		s      *swarm
+		protoC chan service.Message
+	}
+
+	numPeers, connections := 10, 5
+
+	nodes := make([]*swarm, numPeers)
+	chans := make([]chan service.Message, numPeers)
+	nchan := make(chan *sp, numPeers)
+
+	cfg := config.DefaultConfig()
+	cfg.SwarmConfig.RandomConnections = connections
+	cfg.SwarmConfig.Bootstrap = false
+	bn := p2pTestInstance(t, cfg)
+	// TODO: write protocol matching. so we won't crash connections because bad protocol messages.
+	// if we're after protocol matching then we can crash the connection since its probably malicious
+	//bn.RegisterProtocol("gossip") // or else it will crash connections
+
+	//err := bn.Start()
+	//assert.NoError(t, err, "Bootnode didnt work")
+
+	cfg2 := config.DefaultConfig()
+	cfg2.SwarmConfig.RandomConnections = connections
+	cfg2.SwarmConfig.Bootstrap = true
+	cfg2.SwarmConfig.BootstrapNodes = []string{node.StringFromNode(bn.lNode.Node)}
+	for i := 0; i < numPeers; i++ {
+		go func() {
+			nod := p2pTestInstance(t, cfg2)
+			if nod == nil {
+				t.Error("ITS NIL WTF")
+			}
+			nodchan := nod.RegisterProtocol("gossip") // this is example
+			//err := nod.Start()
+			//assert.NoError(t, err, err)
+			nchan <- &sp{nod, nodchan}
+		}()
+	}
+
+	i := 0
+	for n := range nchan {
+		nodes[i] = n.s
+		chans[i] = n.protoC
+
+		i++
+		if i >= numPeers {
+			close(nchan)
+		}
+	}
+
+	fmt.Println(" ################################################ ALL PEERS BOOTSTRAPPED ################################################")
+/*
+	msg := []byte("gossip")
+	fmt.Println(" ################################################ GOSSIPING ################################################")
+	b := time.Now()
+	err = nodes[0].Broadcast("gossip", msg)
+
+	fmt.Printf("%v GOSSIPED TO %v, err=%v\r\n", nodes[0].lNode.String(), err)
+
+	var got int32 = 0
+	didntget := make([]*swarm, 0)
+	//var wg sync.WaitGroup
+
+	for c := range chans {
+		var resp service.Message
+		timeout := time.NewTimer(time.Second * 10)
+		select {
+		case resp = <-chans[c]:
+		case <-timeout.C:
+			didntget = append(didntget, nodes[c])
+			continue
+		}
+
+		if bytes.Equal(resp.Data(), msg) {
+			nodes[c].lNode.Info("GOT THE gossip MESSAge ", atomic.AddInt32(&got, 1))
+		}
+	}
+	//wg.Wait()
+	bn.LocalNode().Info("THIS IS GOT ", got)
+	assert.Equal(t, got, int32(numPeers))
+	bn.lNode.Info("message spread to %v peers in %v", got, time.Since(b))
+	didnt := ""
+	for i := 0; i < len(didntget); i++ {
+		didnt += fmt.Sprintf("%v\r\n", didntget[i].lNode.String())
+	}
+	bn.lNode.Info("didnt get : %v", didnt)
+	time.Sleep(time.Millisecond * 1000) // to see the log
+*/
 }

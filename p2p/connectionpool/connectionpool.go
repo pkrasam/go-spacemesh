@@ -205,7 +205,7 @@ Loop:
 			cp.handleNewConnection(conn.RemotePublicKey(), conn, net.Remote)
 
 		case conn := <-cp.net.ClosingConnections():
-			cp.net.Logger().Info("11111111111")
+			cp.net.Logger().Info("11111111111-00000000")
 			cp.handleClosedConnection(conn)
 
 		case <-cp.teardown:

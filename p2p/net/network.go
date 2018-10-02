@@ -181,7 +181,6 @@ func (n *Net) createSecuredConnection(address string, remotePublicKey crypto.Pub
 		conn.Close()
 		return nil, fmt.Errorf("%s err: %v", errMsg, err)
 	}
-
 	conn.SetSession(session)
 	return conn, nil
 }

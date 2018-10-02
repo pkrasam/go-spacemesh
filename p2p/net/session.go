@@ -23,6 +23,8 @@ type NetworkSession interface {
 
 	Decrypt(in []byte) ([]byte, error) // decrypt data using session dec key
 	Encrypt(in []byte) ([]byte, error) // encrypt data using session enc key
+
+	EncryptGuard() *sync.Mutex // used for creating a per session transaction of data encryption and data delivery
 }
 
 // TODO: add support for idle session expiration
@@ -43,7 +45,9 @@ type NetworkSessionImpl struct {
 	remoteNodeID string
 
 	blockEncrypter cbcMode
+	encGuard       sync.Mutex
 	blockDecrypter cbcMode
+	lockDec        sync.Mutex
 }
 
 // cbcMode is an interface for block ciphers using cipher block chaining.
@@ -107,8 +111,12 @@ func (n *NetworkSessionImpl) Encrypt(in []byte) ([]byte, error) {
 	}
 	paddedIn := crypto.AddPKCSPadding(in)
 	out := make([]byte, len(paddedIn))
+	//n.encGuard.Lock()
+	//fmt.Println("enc start")
 	n.blockEncrypter.CryptBlocks(out, paddedIn)
-	n.resetIV()
+	//n.resetIV()
+	//fmt.Println("enc end")
+	//n.encGuard.Unlock()
 	return out, nil
 }
 
@@ -119,13 +127,22 @@ func (n *NetworkSessionImpl) Decrypt(in []byte) ([]byte, error) {
 		return nil, errors.New("Invalid input buffer - 0 len")
 	}
 
-	n.blockDecrypter.CryptBlocks(in, in)
-	clearText, err := crypto.RemovePKCSPadding(in)
+	out := make([]byte, l)
+	//n.lockDec.Lock()
+	//fmt.Println("dec start")
+	n.blockDecrypter.CryptBlocks(out, in)
+	//n.resetIV()
+	//fmt.Println("dec end")
+	//n.lockDec.Unlock()
+	clearText, err := crypto.RemovePKCSPadding(out)
 	if err != nil {
 		return nil, err
 	}
-	n.resetIV()
 	return clearText, nil
+}
+
+func (n *NetworkSessionImpl) EncryptGuard() *sync.Mutex {
+	return &n.encGuard
 }
 
 // NewNetworkSession creates a new network session based on provided data
@@ -140,6 +157,8 @@ func NewNetworkSession(id, keyE, keyM, pubKey []byte, localNodeID, remoteNodeID 
 		authenticated: false,
 		localNodeID:   localNodeID,
 		remoteNodeID:  remoteNodeID,
+		encGuard:      sync.Mutex{},
+		lockDec:       sync.Mutex{},
 	}
 
 	// create and store block enc/dec
@@ -151,6 +170,5 @@ func NewNetworkSession(id, keyE, keyM, pubKey []byte, localNodeID, remoteNodeID 
 
 	n.blockEncrypter = cipher.NewCBCEncrypter(blockCipher, n.id).(cbcMode)
 	n.blockDecrypter = cipher.NewCBCDecrypter(blockCipher, n.id).(cbcMode)
-
 	return n, nil
 }

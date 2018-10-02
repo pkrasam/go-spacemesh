@@ -73,5 +73,4 @@ func TestHandlePreSessionIncomingMessage(t *testing.T) {
 	err = remoteNet.HandlePreSessionIncomingMessage(con, data)
 	assert.Error(t, err, "Sent message with wrong networkID")
 	//,_, er = GenerateHandshakeRequestData(localNode.PublicKey(), localNode.PrivateKey(),con.RemotePublicKey(), remoteNet.NetworkID() +1)
-
 }

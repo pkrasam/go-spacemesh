@@ -54,6 +54,7 @@ type swarm struct {
 
 	// Shutdown the loop
 	shutdown chan struct{} // local request to kill the swarm from outside. e.g when local node is shutting down
+	msgCnt int
 }
 
 // newSwarm creates a new P2P instance
@@ -88,7 +89,7 @@ func newSwarm(config config.Config, newNode bool) (*swarm, error) {
 		network:          n,
 		cPool:            connectionpool.NewConnectionPool(n, l.PublicKey()),
 		shutdown:         make(chan struct{}), // non-buffered so requests to shutdown block until swarm is shut down
-
+		msgCnt:           0,
 	}
 
 	s.dht = dht.New(l, config.SwarmConfig, s)
@@ -149,6 +150,11 @@ func signMessage(pv crypto.PrivateKey, pm *pb.ProtocolMessage) error {
 
 // authAuthor authorizes that a message is signed by its claimed author
 func authAuthor(pm *pb.ProtocolMessage) error {
+	// TODO REMOVE - for debug only
+	if pm.Metadata == nil {
+		fmt.Println("333333333 nil MD")
+		return fmt.Errorf("DEBUG")
+	}
 	// TODO: consider getting pubkey from outside. attackar coul'd just manipulate the whole message pubkey and sign.
 	sign := pm.Metadata.AuthorSign
 	sPubkey := pm.Metadata.AuthPubKey
@@ -223,38 +229,124 @@ func (s *swarm) SendMessage(peerPubKey string, protocol string, payload []byte) 
 		return err
 	}
 
-	err = authAuthor(protomessage)
-	if err != nil {
-		return err
-	}
+	// TODO what is it good for?
+	//err = authAuthor(protomessage)
+	//if err != nil {
+	//	return err
+	//}
 
 	data, err := proto.Marshal(protomessage)
+	//s.lNode.Logger.Info("after marshal ", data)
 	if err != nil {
 		return fmt.Errorf("failed to encode signed message err: %v", err)
 	}
 
+	session.EncryptGuard().Lock()
+
+	// messages must be sent in the same order as the order that the messages were encrypted because the iv used to encrypt
+	// (and therefore decrypt) is the last encrypted block of the previous message that were encrypted
 	encPayload, err := session.Encrypt(data)
+	s.lNode.Logger.Info("enc=%v", encPayload[0:3])
 	if err != nil {
+		session.EncryptGuard().Unlock()
 		e := fmt.Errorf("aborting send - failed to encrypt payload: %v", err)
 		return e
 	}
 
+	ts := time.Now().Unix()
+
 	cmd := &pb.CommonMessageData{
 		SessionId: session.ID(),
 		Payload:   encPayload,
-		Timestamp: time.Now().Unix(),
+		Timestamp: ts,
 	}
 
 	final, err := proto.Marshal(cmd)
 	if err != nil {
+		session.EncryptGuard().Unlock()
+		// since the encryption succeeded and the iv was modified for the next message, we must close the connection otherwise
+		// the missing message will prevent the receiver from decrypting any future message
+		s.lNode.Logger.Error("message was encrypted but wasn't sent, closing the connection")
+		conn.Close()
 		e := fmt.Errorf("aborting send - invalid msg format %v", err)
 		return e
 	}
 
 	// finally - send it away!
-	s.lNode.Debug("Sending protocol message down the connection to %v", log.PrettyID(peerPubKey))
+	s.lNode.Debug("Sending protocol message down the connection to %v, ts=%v", log.PrettyID(peerPubKey), ts)
 
-	return conn.Send(final)
+	err = conn.Send(final)
+	s.lNode.Logger.Info("sent enc=%v", encPayload[0:3])
+	session.EncryptGuard().Unlock()
+
+	return err
+}
+
+func (s *swarm) SendMessageTest(peerPubKey string, protocol string, payload []byte) (error, net.Connection, []byte) {
+
+	peer, err := s.dht.Lookup(peerPubKey) // blocking, might issue a network lookup that'll take time.
+
+	if err != nil {
+		return err, nil, nil
+	}
+
+	conn, err := s.cPool.GetConnection(peer.Address(), peer.PublicKey()) // blocking, might take some time in case there is no connection
+	if err != nil {
+		s.lNode.Warning("failed to send message to %v, no valid connection. err: %v", peer.String(), err)
+		return err, nil, nil
+	}
+
+	session := conn.Session()
+	if session == nil {
+		s.lNode.Warning("failed to send message to %v, no valid session. err: %v", peer.String(), err)
+		return err, nil, nil
+	}
+
+	protomessage := &pb.ProtocolMessage{
+		Metadata: newProtocolMessageMetadata(s.lNode.PublicKey(), protocol, false),
+		Payload:  payload,
+	}
+
+	err = signMessage(s.lNode.PrivateKey(), protomessage)
+	if err != nil {
+		return err, nil ,nil
+	}
+
+	// TODO what is it good for?
+	err = authAuthor(protomessage)
+	if err != nil {
+		return err, nil, nil
+	}
+
+	data, err := proto.Marshal(protomessage)
+	if err != nil {
+		return fmt.Errorf("failed to encode signed message err: %v", err), nil, nil
+	}
+
+	encPayload, err := session.Encrypt(data)
+	if err != nil {
+		e := fmt.Errorf("aborting send - failed to encrypt payload: %v", err)
+		return e, nil, nil
+	}
+
+	ts := time.Now().Unix()
+
+	cmd := &pb.CommonMessageData{
+		SessionId: session.ID(),
+		Payload:   encPayload,
+		Timestamp: ts,
+	}
+
+	final, err := proto.Marshal(cmd)
+	if err != nil {
+		e := fmt.Errorf("aborting send - invalid msg format %v", err)
+		return e, nil, nil
+	}
+
+	// finally - send it away!
+	s.lNode.Info("Sending protocol message down the connection to %v, ts=%v", log.PrettyID(peerPubKey), ts)
+
+	return nil,conn,final
 }
 
 // RegisterProtocol registers an handler for `protocol`
@@ -283,6 +375,7 @@ func (s *swarm) shutdownInternal() {
 func (s *swarm) processMessage(ime net.IncomingMessageEvent) {
 	err := s.onRemoteClientMessage(ime)
 	if err != nil {
+		s.lNode.Info("222222222222222 err %v enc=%v", err, ime.Message[21:24])
 		ime.Conn.Close()
 		// TODO: differentiate action on errors
 	}
@@ -302,7 +395,8 @@ Loop:
 	for {
 		select {
 		case ime := <-s.network.IncomingMessages():
-			go s.processMessage(ime)
+			s.lNode.Logger.Info("incoming msg=%v", ime.Message[21:24])
+			/*go*/ s.processMessage(ime)
 		case nc := <-newconnections:
 			go s.updateConnection(nc)
 		case <-s.shutdown:
@@ -362,6 +456,7 @@ func (s *swarm) onRemoteClientMessage(msg net.IncomingMessageEvent) error {
 	c := &pb.CommonMessageData{}
 	err := proto.Unmarshal(msg.Message, c)
 	if err != nil {
+		s.lNode.Logger.Info("@@@@@@@@@@@@@@@@@@@@@@@@@@")
 		return ErrBadFormat
 	}
 
@@ -384,6 +479,8 @@ func (s *swarm) onRemoteClientMessage(msg net.IncomingMessageEvent) error {
 		return ErrNoSession
 	}
 
+	//s.lNode.Logger.Info("before decrypt msg=", c.Payload)
+
 	decPayload, err := session.Decrypt(c.Payload)
 	if err != nil {
 		return ErrFailDecrypt
@@ -392,6 +489,7 @@ func (s *swarm) onRemoteClientMessage(msg net.IncomingMessageEvent) error {
 	pm := &pb.ProtocolMessage{}
 	err = proto.Unmarshal(decPayload, pm)
 	if err != nil {
+		//s.lNode.Logger.Info("^^^^^^^^^^^^^^^^^^^^^^^^^^", decPayload)
 		return ErrBadFormat
 	}
 
@@ -416,6 +514,8 @@ func (s *swarm) onRemoteClientMessage(msg net.IncomingMessageEvent) error {
 	}
 
 	s.lNode.Debug("Forwarding message to protocol")
+	//s.lNode.Logger.Info("after decrypt msg=%s", pm.Payload)
+
 	msgchan <- protocolMessage{remoteNode, pm.Payload}
 
 	return nil

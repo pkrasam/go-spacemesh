@@ -153,6 +153,7 @@ func (c *FormattedConnection) Send(m []byte) error {
 func (c *FormattedConnection) Close() {
 	c.closeOnce.Do(func() {
 		atomic.AddInt32(&c.closed, int32(1))
+		c.logger.Info("111111111111 - Close connection was called")
 		c.closeChan <- struct{}{}
 	})
 }
@@ -164,7 +165,7 @@ func (c *FormattedConnection) Closed() bool {
 
 
 func (c *FormattedConnection) shutdown(err error) {
-	c.logger.Info("shutdown. err=%v", err)
+	c.logger.Info("shutdown. id=%s err=%v", c.id, err)
 	c.formatter.Close()
 	c.networker.ClosingConnections() <- c
 }
@@ -192,7 +193,7 @@ Loop:
 				}
 			} else {
 				// channel for protocol messages
-				go c.publish(msg)
+				/*go*/ c.publish(msg)
 			}
 
 		case <-c.closeChan:
