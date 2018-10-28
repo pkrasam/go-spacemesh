@@ -1,7 +1,10 @@
 package hare
 
 import (
+	"github.com/golang/protobuf/proto"
+	"github.com/spacemeshos/go-spacemesh/hare/pb"
 	"github.com/spacemeshos/go-spacemesh/log"
+	"sync"
 	"time"
 )
 
@@ -18,25 +21,34 @@ type Parti struct {
 
 type Algo struct {
 	Parti
-	oracle    IRolacle // roles oracle
+	oracle    Rolacle // roles oracle
 	network   NetworkConnection
 	startTime time.Time
-	inbox     chan IByteable
+	inbox     chan Byteable
 	abort     chan struct{}
+	round     uint32
+	mutex     *sync.Mutex
+}
+
+func (algo *Algo) NewAlgo(s Set, oracle Rolacle) {
+	algo.k = 0
+	algo.ki = 0
+	algo.s = s
+	algo.mutex = &sync.Mutex{}
 }
 
 func (algo *Algo) Start() {
 	algo.startTime = time.Now()
-	algo.k = 0
-	algo.ki = 0
-	algo.network.RegisterProtocol(PROTO_NAME)
 
 	go algo.Listen()
+
 	algo.do()
 }
 
 func (algo *Algo) Listen() {
 	log.Info("Start listening")
+	algo.network.RegisterProtocol(ProtoName)
+
 	for {
 		select {
 		case msg := <-algo.inbox:
@@ -48,15 +60,65 @@ func (algo *Algo) Listen() {
 	}
 }
 
-func (algo *Algo) handleMessage(msg IByteable) {
-	if time.Now().After(algo.startTime.Add(algo.k * ROUND_DURATION)) {
+func (algo *Algo) handleMessage(msg Byteable) {
+	hareMsg := &pb.HareMessage{}
+	proto.Unmarshal(msg.Bytes(), hareMsg)
+
+	/*if time.Now().After(algo.startTime.Add(time.Duration(algo.k) * RoundDuration)) {
 		return // ignore late msg
 	}
+	*/
 
-	// classify to current round
-	algo.round0(msg)
+	algo.mutex.Lock()
+
+	if getRoundOf(hareMsg) != algo.round { // verify round
+		return
+	}
+
+	// TODO: verify role
+
+	// add to list of msg
+	//
+	//
+
+	algo.mutex.Unlock()
 }
 
 func (algo *Algo) do() {
-	
+	ticker := time.NewTicker(RoundDuration)
+	for t := range ticker.C { // WHEN DOES IT STOP?
+		log.Info("Next round: %d, %d", algo.round, t)
+
+		algo.mutex.Lock()
+
+		// switch round
+		// do round
+
+		algo.round++
+		//init data
+
+		algo.mutex.Unlock()
+	}
+
+}
+
+func getRoundOf(msg *pb.HareMessage) uint32 {
+	if msg.Type > 3 {
+		panic("Unknown message type")
+	}
+
+	return msg.Type
+}
+
+type PrePost interface {
+	DoPre(d Knowledge)
+	DoPost(d Knowledge)
+}
+
+type Round0 struct {
+	pb.HareMessage
+}
+
+func (*Round0) DoPre() {
+
 }
