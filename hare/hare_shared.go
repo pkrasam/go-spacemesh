@@ -13,12 +13,8 @@ const (
 	Notify   = 3 // round 3
 )
 
-type BLockId uint32 // TODO: replace with import core
-
-type NetworkConnection interface {
-	Broadcast(message []byte) (int, error)
-	RegisterProtocol(protoName string) chan Byteable
-}
+type BlockId uint32 // TODO: replace with import
+type LayerId uint32 // TODO: replace with import
 
 type Byteable interface {
 	Bytes() []byte

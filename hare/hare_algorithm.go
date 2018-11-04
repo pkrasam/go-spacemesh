@@ -4,12 +4,13 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/spacemeshos/go-spacemesh/hare/pb"
 	"github.com/spacemeshos/go-spacemesh/log"
+	"github.com/spacemeshos/go-spacemesh/p2p"
 	"sync"
 	"time"
 )
 
 type Set struct {
-	blocks map[BLockId]struct{}
+	blocks map[BlockId]struct{}
 }
 
 type Parti struct {
@@ -22,7 +23,7 @@ type Parti struct {
 type Algo struct {
 	Parti
 	oracle    Rolacle // roles oracle
-	network   NetworkConnection
+	network   p2p.Service
 	startTime time.Time
 	inbox     chan Byteable
 	abort     chan struct{}
@@ -108,17 +109,4 @@ func getRoundOf(msg *pb.HareMessage) uint32 {
 	}
 
 	return msg.Type
-}
-
-type PrePost interface {
-	DoPre(d Knowledge)
-	DoPost(d Knowledge)
-}
-
-type Round0 struct {
-	pb.HareMessage
-}
-
-func (*Round0) DoPre() {
-
 }

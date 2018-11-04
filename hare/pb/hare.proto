@@ -3,40 +3,57 @@ syntax = "proto3";
 package pb;
 option go_package = "pb";
 
+// the base message of the protocol
 message HareMessage {
     int32 pubKey = 1;
-    int64 sig = 2;
+    int64 sig = 2; // signs layer and payload
     uint32 layer = 3;
 
     oneof payload {
-        StatusMessage status = 5;
-        CommitMessage commit = 6;
-        SignedMessage signed = 7;
-        CertMessage certmsg = 8;
-        ExtendedProposal eprop = 9;
+        CommitMessage commit = 4;
+        CertMessage certified = 5;
+        ProposalMessage proposal = 6;
     }
 }
 
+// a message with a signature
 message SignedMessage {
-    int64 sig = 1;
+    int64 sig = 1; // signature is over the payload
 
     oneof payload {
-        StatusMessage status = 5;
-        NotifyMessage notify = 6;
-        CommitMessage commit = 7;
+        StatusMessage status = 2;
+        NotifyMessage notify = 3;
+    }
+}
+
+// a message with public key
+message PubkeyMessage {
+    int32 pubkey = 1;
+    oneof payload { // used for status/commit message for proof and certificate
+        StatusMessage status = 2;
+        CommitMessage commit = 3;
     }
 }
 
 message Certificate {
-    repeated HareMessage commits = 1;
+    repeated PubkeyMessage commits = 1; // a collection of commit messages
     int64 aggSig = 2;
 }
 
 message Proof {
-    repeated HareMessage statuses = 1; // problem
-    Certificate cert = 2;
+    repeated PubkeyMessage statuses = 1; // a collection of status messages
+    int64 aggSig = 2;
+
+    Certificate cert = 3;
 }
 
+// a signed message with a certificate
+message CertMessage {
+    Certificate cert = 1;
+    SignedMessage msg = 2;
+}
+
+// PRIMITIVES BEGIN
 message CommitMessage {
     uint32 k = 1;
     repeated uint32 blockId = 2; // S
@@ -56,22 +73,17 @@ message NotifyMessage {
 message ProposalMessage {
     uint32 k = 1;
     repeated uint32 blockId = 2; // S
+    Proof proof = 3;
 }
+// PRIMITIVES END
 
-message ExtendedProposal {
-    SignedMessage msg = 1;
-    Proof proof = 2;
-}
 
-message CertMessage {
-    Certificate cert = 1;
-    SignedMessage msg = 2;
-}
+// Explanation
 
 // STATUS:          HareMessage.CertMessage.SignedMessage.StatusMessage (SM sign status, HM sign all)
 // COMMIT:          HareMessage.CommitMessage (HM sign all)
 // NOTIFY:          HareMessage.CertMessage.SignedMessage.NotifyMessage (SM sign notify, HM sign all)
-// PROPOSAL:        HareMessage.ExtendedProposal.SignedMessage.ProposalMessage (SM sign proposal, HM sign all)
-// PROPOSAL PROOF:  HareMessage.ExtendedProposal.Proof.[SignedMessage].StatusMessage (proof contains signed statuses)
-// CERTIFICATE:     contains repeated HareMessage which contain CommitMessages
+// PROPOSAL:        HareMessage.ProposalMessage (HM sign all)
+// PROPOSAL PROOF:  HareMessage.ProposalMessage.Proof.[SignedMessage].StatusMessage (proof contains signed statuses)
+// CERTIFICATE:     Build from public key and SignedMessage(status)/HareMessage(commit) to create PubkeyMessage
 
