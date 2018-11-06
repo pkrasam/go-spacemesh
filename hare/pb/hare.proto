@@ -3,87 +3,38 @@ syntax = "proto3";
 package pb;
 option go_package = "pb";
 
-// the base message of the protocol
+// top message of the protocol
 message HareMessage {
-    int32 pubKey = 1;
-    int64 sig = 2; // signs layer and payload
-    uint32 layer = 3;
+    bytes pubKey = 1;
 
-    oneof payload {
-        CommitMessage commit = 4;
-        CertMessage certified = 5;
-        ProposalMessage proposal = 6;
-    }
+    bytes inner_sig = 2; // sign type, layer and payload
+    uint32 type = 3; // message type (status/commit/proposal/notify)
+    bytes layer = 4;
+    BasicMessage message = 5;
+
+    bytes outer_sig = 6; // optional. sign also certificate
+    Certificate cert = 7; // optional
 }
 
-// a message with a signature
-message SignedMessage {
-    int64 sig = 1; // signature is over the payload
-
-    oneof payload {
-        StatusMessage status = 2;
-        NotifyMessage notify = 3;
-    }
-}
-
-// a message with public key
-message PubkeyMessage {
-    int32 pubkey = 1;
-    oneof payload { // used for status/commit message for proof and certificate
-        StatusMessage status = 2;
-        CommitMessage commit = 3;
-    }
-}
-
+// the certificate
 message Certificate {
-    repeated PubkeyMessage commits = 1; // a collection of commit messages
-    int64 aggSig = 2;
+    repeated bytes blockId = 1; // the committed set S
+    repeated HareMessage commits = 2; // a collection of commit messages
+    bytes aggSig = 3; // aggregated sign for commits
 }
 
-message Proof {
-    repeated PubkeyMessage statuses = 1; // a collection of status messages
-    int64 aggSig = 2;
-
+// safe value proof message
+message SVP {
+    repeated HareMessage statuses = 1; // a collection of status messages
+    bytes aggSig = 2; // aggregated sig for statuses
     Certificate cert = 3;
 }
 
-// a signed message with a certificate
-message CertMessage {
-    Certificate cert = 1;
-    SignedMessage msg = 2;
-}
-
-// PRIMITIVES BEGIN
-message CommitMessage {
+// basic message
+message BasicMessage {
     uint32 k = 1;
-    repeated uint32 blockId = 2; // S
+    repeated uint32 blockId = 2; // the set S. optional for commit message in a certificate
+    bytes role_proof = 3; // role is implicit by message type, this is the proof
+    SVP svp_proof = 4; // optional. only for proposal messages
 }
-
-message StatusMessage {
-    uint32 k = 1;
-    repeated uint32 blockId = 2; // S
-    uint32 ki = 3;
-}
-
-message NotifyMessage {
-    uint32 k = 1;
-    repeated uint32 blockId = 2; // S
-}
-
-message ProposalMessage {
-    uint32 k = 1;
-    repeated uint32 blockId = 2; // S
-    Proof proof = 3;
-}
-// PRIMITIVES END
-
-
-// Explanation
-
-// STATUS:          HareMessage.CertMessage.SignedMessage.StatusMessage (SM sign status, HM sign all)
-// COMMIT:          HareMessage.CommitMessage (HM sign all)
-// NOTIFY:          HareMessage.CertMessage.SignedMessage.NotifyMessage (SM sign notify, HM sign all)
-// PROPOSAL:        HareMessage.ProposalMessage (HM sign all)
-// PROPOSAL PROOF:  HareMessage.ProposalMessage.Proof.[SignedMessage].StatusMessage (proof contains signed statuses)
-// CERTIFICATE:     Build from public key and SignedMessage(status)/HareMessage(commit) to create PubkeyMessage
 
