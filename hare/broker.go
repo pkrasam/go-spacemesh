@@ -1,32 +1,36 @@
 package hare
 
 import (
+	"github.com/gogo/protobuf/proto"
+	"github.com/spacemeshos/go-spacemesh/hare/pb"
+	"github.com/spacemeshos/go-spacemesh/log"
 	"github.com/spacemeshos/go-spacemesh/p2p"
 	"github.com/spacemeshos/go-spacemesh/p2p/service"
+	"sync"
 )
 
 const InboxCapacity = 100
 
 type Communicator interface {
 	Broadcast(msg Byteable)
-	Inbox() chan Byteable
+	Inbox() chan *pb.HareMessage
 }
 
 type LayerCommunicator struct {
 	layer LayerId
 	p2p p2p.Service
-	inbox chan Byteable
+	inbox chan *pb.HareMessage
 }
 
-// TODO: consider adding logging
 type Broker struct {
 	p2p p2p.Service
 	inbox chan service.Message
-	outbox map[LayerId]chan Byteable
-	abort chan struct{}
+	outbox map[LayerId]chan *pb.HareMessage
+	abort chan struct{} // TODO: consider "Abortable" anonymous composition
+	mutex sync.Mutex
 }
 
-func NewLayerCommunicator(layer LayerId, p2p p2p.Service, inbox chan Byteable) Communicator {
+func NewLayerCommunicator(layer LayerId, p2p p2p.Service, inbox chan *pb.HareMessage) Communicator {
 	return &LayerCommunicator{layer, p2p, inbox}
 }
 
@@ -34,7 +38,7 @@ func (comm *LayerCommunicator) Broadcast(msg Byteable) {
 	//p2p.Broadcast....
 }
 
-func (comm *LayerCommunicator) Inbox() chan Byteable {
+func (comm *LayerCommunicator) Inbox() chan *pb.HareMessage {
 	return comm.inbox
 }
 
@@ -48,7 +52,6 @@ func NewBroker(p2p p2p.Service) *Broker {
 
 // Start listening to protocol messages and dispatching messages
 func (broker *Broker) Start() {
-	// TODO: p2p register
 	broker.inbox = broker.p2p.RegisterProtocol(ProtoName)
 
 	go broker.dispatcher()
@@ -59,9 +62,13 @@ func (broker *Broker) dispatcher() {
 	for {
 		select {
 		case msg := <-broker.inbox:
-			msg.Data()
-		// TODO: protobuf to our type and pass to matching layer
-		// TODO: should probably pass struct msg and not Byteable
+			hareMsg := &pb.HareMessage{}
+			err := proto.Unmarshal(msg.Data(), hareMsg)
+			if err != nil {
+				log.Error("Could not unmarshal message: ", err)
+			}
+
+			broker.outbox[LayerId(hareMsg.GetLayer())] <- hareMsg
 
 		case <-broker.abort:
 			return
@@ -69,10 +76,12 @@ func (broker *Broker) dispatcher() {
 	}
 }
 
-// TODO: should it be thread safe?
 func (broker *Broker) Communicator(layer LayerId) Communicator {
+	broker.mutex.Lock()
+	defer broker.mutex.Unlock()
+
 	if _ , exist := broker.outbox[layer]; !exist {
-		broker.outbox[layer] = make(chan Byteable, InboxCapacity)
+		broker.outbox[layer] = make(chan *pb.HareMessage, InboxCapacity)
 	}
 
 	return NewLayerCommunicator(layer, broker.p2p, broker.outbox[layer])
