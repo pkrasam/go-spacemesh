@@ -16,6 +16,25 @@ type Communicator interface {
 	Inbox() chan *pb.HareMessage
 }
 
+type Aborter struct {
+	count uint8
+	abort chan struct{}
+}
+
+func NewAborter(abortCount uint8) Aborter {
+	return Aborter{abortCount, make(chan struct{})}
+}
+
+func (aborter *Aborter) Abort() {
+	for i := uint8(0); i < aborter.count; i++ {
+		aborter.abort <- struct{}{}
+	}
+}
+
+func (aborter *Aborter) AbortChannel() chan struct{} {
+	return aborter.abort
+}
+
 type LayerCommunicator struct {
 	layer LayerId
 	p2p p2p.Service
@@ -26,8 +45,8 @@ type Broker struct {
 	p2p p2p.Service
 	inbox chan service.Message
 	outbox map[LayerId]chan *pb.HareMessage
-	abort chan struct{} // TODO: consider "Abortable" anonymous composition
 	mutex sync.Mutex
+	Aborter
 }
 
 func NewLayerCommunicator(layer LayerId, p2p p2p.Service, inbox chan *pb.HareMessage) Communicator {
@@ -35,7 +54,7 @@ func NewLayerCommunicator(layer LayerId, p2p p2p.Service, inbox chan *pb.HareMes
 }
 
 func (comm *LayerCommunicator) Broadcast(msg Byteable) {
-	//p2p.Broadcast....
+	comm.p2p.Broadcast(ProtoName, msg.Bytes())
 }
 
 func (comm *LayerCommunicator) Inbox() chan *pb.HareMessage {
@@ -46,6 +65,7 @@ func NewBroker(p2p p2p.Service) *Broker {
 	p := new(Broker)
 	p.p2p = p2p
 	p.abort = make(chan struct{})
+	p.Aborter = NewAborter(1)
 
 	return p
 }
@@ -70,12 +90,13 @@ func (broker *Broker) dispatcher() {
 
 			broker.outbox[LayerId(hareMsg.GetLayer())] <- hareMsg
 
-		case <-broker.abort:
+		case <-broker.AbortChannel():
 			return
 		}
 	}
 }
 
+// Gets a new Communicator for the given layer
 func (broker *Broker) Communicator(layer LayerId) Communicator {
 	broker.mutex.Lock()
 	defer broker.mutex.Unlock()
