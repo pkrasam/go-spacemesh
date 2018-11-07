@@ -11,13 +11,9 @@ import (
 
 const InboxCapacity = 100
 
-type Communicator interface {
-	Broadcast(msg Byteable)
-	Inbox() chan *pb.HareMessage
-}
-
+// Aborter is used to add abortability
 type Aborter struct {
-	count uint8
+	count uint8 // the number of listeners
 	abort chan struct{}
 }
 
@@ -25,44 +21,31 @@ func NewAborter(abortCount uint8) *Aborter {
 	return &Aborter{abortCount, make(chan struct{})}
 }
 
+// Aborts all listening instances
 func (aborter *Aborter) Abort() {
 	for i := uint8(0); i < aborter.count; i++ {
-		aborter.abort <- struct{}{}
+		aborter.abort <- struct{}{} // signal abort
 	}
 }
 
+// AbortChannel returns the abort channel to wait on
 func (aborter *Aborter) AbortChannel() chan struct{} {
 	return aborter.abort
 }
 
-func (aborter *Aborter) Increase() {
+// Increment the number of listening instances
+// Should not be called after aborting
+func (aborter *Aborter) Increment() {
 	aborter.count++
 }
 
-type LayerCommunicator struct {
-	layer LayerId
-	p2p p2p.Service
-	inbox chan *pb.HareMessage
-}
-
+// Broker is responsible for dispatching hare messages to the matching layer listeners
 type Broker struct {
-	p2p p2p.Service
-	inbox chan service.Message
+	p2p    p2p.Service
+	inbox  chan service.Message
 	outbox map[LayerId]chan *pb.HareMessage
-	mutex sync.Mutex
+	mutex  sync.Mutex
 	*Aborter
-}
-
-func NewLayerCommunicator(layer LayerId, p2p p2p.Service, inbox chan *pb.HareMessage) Communicator {
-	return &LayerCommunicator{layer, p2p, inbox}
-}
-
-func (comm *LayerCommunicator) Broadcast(msg Byteable) {
-	comm.p2p.Broadcast(ProtoName, msg.Bytes())
-}
-
-func (comm *LayerCommunicator) Inbox() chan *pb.HareMessage {
-	return comm.inbox
 }
 
 func NewBroker(p2p p2p.Service) *Broker {
@@ -100,14 +83,14 @@ func (broker *Broker) dispatcher() {
 	}
 }
 
-// Gets a new Communicator for the given layer
-func (broker *Broker) Communicator(layer LayerId) Communicator {
+// Inbox returns the messages channel associated with the layer
+func (broker *Broker) Inbox(layer LayerId) chan *pb.HareMessage {
 	broker.mutex.Lock()
 	defer broker.mutex.Unlock()
 
-	if _ , exist := broker.outbox[layer]; !exist {
+	if _, exist := broker.outbox[layer]; !exist {
 		broker.outbox[layer] = make(chan *pb.HareMessage, InboxCapacity)
 	}
 
-	return NewLayerCommunicator(layer, broker.p2p, broker.outbox[layer])
+	return broker.outbox[layer]
 }

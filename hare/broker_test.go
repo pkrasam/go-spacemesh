@@ -29,12 +29,12 @@ func TestBroker_Received(t *testing.T) {
 
 	broker := NewBroker(n1)
 	broker.Start()
-	comm1 := broker.Communicator(1)
+	inbox := broker.Inbox(1)
 
 	serMsg := createMessage(t, 1)
 	n2.Broadcast(ProtoName, serMsg)
 
-	recv := <-comm1.Inbox()
+	recv := <- inbox
 
 	assert.True(t, recv.Layer == 1)
 }
@@ -45,9 +45,9 @@ func TestBroker_Abort(t *testing.T) {
 	n1 := sim.NewNode()
 
 	broker := NewBroker(n1)
-	broker.Increase()
+	broker.Increment()
 	broker.Start()
-	broker.Communicator(1)
+	broker.Inbox(1)
 
 	timer := time.NewTimer(3 * time.Second)
 
@@ -67,9 +67,10 @@ func sendMessages(t *testing.T, layer LayerId, n *simulator.Node, count int) {
 	}
 }
 
-func waitForMessages(comm Communicator, msgCount int) {
+func waitForMessages(t *testing.T, inbox chan *pb.HareMessage, layer LayerId, msgCount int) {
 	for i := 0; i < msgCount; i++ {
-		<-comm.Inbox()
+		x := <-inbox
+		assert.True(t, x.Layer == uint32(layer))
 	}
 }
 
@@ -82,17 +83,17 @@ func TestBroker_MultipleLayers(t *testing.T) {
 
 	broker := NewBroker(n1)
 	broker.Start()
-	comm1 := broker.Communicator(1)
-	comm2 := broker.Communicator(2)
-	comm3 := broker.Communicator(3)
+	inbox1 := broker.Inbox(1)
+	inbox2 := broker.Inbox(2)
+	inbox3 := broker.Inbox(3)
 
 	go sendMessages(t, 1, n2, msgCount)
 	go sendMessages(t, 2, n2, msgCount)
 	go sendMessages(t, 3, n2, msgCount)
 
-	waitForMessages(comm1, msgCount)
-	waitForMessages(comm2, msgCount)
-	waitForMessages(comm3, msgCount)
+	waitForMessages(t, inbox1, 1, msgCount)
+	waitForMessages(t, inbox2, 2, msgCount)
+	waitForMessages(t, inbox3, 3, msgCount)
 
 	assert.True(t, true)
 }
