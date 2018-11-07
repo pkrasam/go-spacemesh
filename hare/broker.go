@@ -21,8 +21,8 @@ type Aborter struct {
 	abort chan struct{}
 }
 
-func NewAborter(abortCount uint8) Aborter {
-	return Aborter{abortCount, make(chan struct{})}
+func NewAborter(abortCount uint8) *Aborter {
+	return &Aborter{abortCount, make(chan struct{})}
 }
 
 func (aborter *Aborter) Abort() {
@@ -33,6 +33,10 @@ func (aborter *Aborter) Abort() {
 
 func (aborter *Aborter) AbortChannel() chan struct{} {
 	return aborter.abort
+}
+
+func (aborter *Aborter) Increase() {
+	aborter.count++
 }
 
 type LayerCommunicator struct {
@@ -46,7 +50,7 @@ type Broker struct {
 	inbox chan service.Message
 	outbox map[LayerId]chan *pb.HareMessage
 	mutex sync.Mutex
-	Aborter
+	*Aborter
 }
 
 func NewLayerCommunicator(layer LayerId, p2p p2p.Service, inbox chan *pb.HareMessage) Communicator {
@@ -64,7 +68,7 @@ func (comm *LayerCommunicator) Inbox() chan *pb.HareMessage {
 func NewBroker(p2p p2p.Service) *Broker {
 	p := new(Broker)
 	p.p2p = p2p
-	p.abort = make(chan struct{})
+	p.outbox = make(map[LayerId]chan *pb.HareMessage)
 	p.Aborter = NewAborter(1)
 
 	return p
