@@ -19,12 +19,3 @@ type LayerId uint32 // TODO: replace with import
 type Byteable interface {
 	Bytes() []byte
 }
-
-type Rolacle interface {
-	Role(i uint32, r uint32) uint32
-}
-
-type Certificate interface {
-	// TODO: change to struct
-	Validate() bool
-}

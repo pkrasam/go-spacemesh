@@ -1,112 +1,132 @@
 package hare
 
 import (
-	"github.com/golang/protobuf/proto"
+	"github.com/gogo/protobuf/proto"
 	"github.com/spacemeshos/go-spacemesh/hare/pb"
 	"github.com/spacemeshos/go-spacemesh/log"
 	"github.com/spacemeshos/go-spacemesh/p2p"
-	"sync"
 	"time"
 )
+
+const InitialKnowledgeSize = 1000
 
 type Set struct {
 	blocks map[BlockId]struct{}
 }
 
-type Parti struct {
-	k    uint32 // the iteration number
-	ki   uint32
-	s    Set // the set of blocks
-	cert Certificate
+type State struct {
+	k    uint32          // the iteration number
+	ki   uint32          // ?
+	s    Set             // the set of blocks
+	cert *pb.Certificate // the certificate
 }
 
-type Algo struct {
-	Parti
+type ConsensusProcess struct {
+	State
+	*Aborter	// the consensus is abortable
+	layerId   LayerId
 	oracle    Rolacle // roles oracle
 	network   p2p.Service
 	startTime time.Time
-	inbox     chan Byteable
-	abort     chan struct{}
-	round     uint32
-	mutex     *sync.Mutex
+	inbox     chan *pb.HareMessage
+	knowledge []*pb.HareMessage
+	isProcessed map[uint32]bool // TODO: could be empty struct
 }
 
-func (algo *Algo) NewAlgo(s Set, oracle Rolacle) {
-	algo.k = 0
-	algo.ki = 0
-	algo.s = s
-	algo.mutex = &sync.Mutex{}
+func (proc *ConsensusProcess) NewConsensusProcess(layer LayerId, s Set, oracle Rolacle, p2p p2p.Service, broker *Broker) {
+	proc.State = State{0, 0, s, nil}
+	proc.Aborter = NewAborter(2)
+	proc.layerId = layer
+	proc.oracle = oracle
+	proc.network = p2p
+	proc.inbox = broker.Inbox(layer)
+	proc.knowledge = make([]*pb.HareMessage, 0)
+	proc.isProcessed = make(map[uint32]bool)
 }
 
-func (algo *Algo) Start() {
-	algo.startTime = time.Now()
+func (proc *ConsensusProcess) Start() {
+	proc.startTime = time.Now()
 
-	go algo.Listen()
-
-	algo.do()
+	go proc.eventLoop()
 }
 
-func (algo *Algo) Listen() {
+func (proc *ConsensusProcess) WaitForCompletion() {
+	select {
+	case <- proc.AbortChannel():
+		return
+	}
+}
+
+func (proc *ConsensusProcess) eventLoop() {
 	log.Info("Start listening")
-	algo.network.RegisterProtocol(ProtoName)
+
+	ticker := time.NewTicker(RoundDuration)
 
 	for {
 		select {
-		case msg := <-algo.inbox:
-			algo.handleMessage(msg) // should be go handle (?)
-		case <-algo.abort:
-			log.Info("Listen aborted")
+		case msg := <-proc.inbox:
+			proc.handleMessage(msg) // TODO: should be go handle (?)
+		case <-ticker.C:
+			proc.nextRound()
+		case <-proc.AbortChannel():
+			log.Info("Abort event loop, instance aborted")
 			return
 		}
 	}
 }
 
-func (algo *Algo) handleMessage(msg Byteable) {
-	hareMsg := &pb.HareMessage{}
-	proto.Unmarshal(msg.Bytes(), hareMsg)
-
-	/*if time.Now().After(algo.startTime.Add(time.Duration(algo.k) * RoundDuration)) {
-		return // ignore late msg
-	}
-	*/
-
-	algo.mutex.Lock()
-
-	if getRoundOf(hareMsg) != algo.round { // verify round
+func (proc *ConsensusProcess) handleMessage(hareMsg *pb.HareMessage) {
+	// verify iteration
+	if hareMsg.Message.K != proc.k {
 		return
 	}
 
+	// TODO: validate sig
+
 	// TODO: verify role
+	// proc.oracle.
 
-	// add to list of msg
-	//
-	//
-
-	algo.mutex.Unlock()
+	proc.knowledge = append(proc.knowledge, hareMsg)
 }
 
-func (algo *Algo) do() {
-	ticker := time.NewTicker(RoundDuration)
-	for t := range ticker.C { // WHEN DOES IT STOP?
-		log.Info("Next round: %d, %d", algo.round, t)
+func (proc *ConsensusProcess) nextRound() {
+	log.Info("Next round: %d", proc.k + 1)
 
-		algo.mutex.Lock()
+	// process the round
+	go proc.processMessages(proc.knowledge)
 
-		// switch round
-		// do round
+	// advance to next round
+	proc.k++
 
-		algo.round++
-		//init data
-
-		algo.mutex.Unlock()
-	}
-
+	// reset knowledge
+	proc.knowledge = make([]*pb.HareMessage, InitialKnowledgeSize)
 }
 
-func getRoundOf(msg *pb.HareMessage) uint32 {
-	if msg.Type > 3 {
-		panic("Unknown message type")
+func (proc *ConsensusProcess) processMessages(msg []*pb.HareMessage) {
+	// check if process of messages has already been made for this round
+	if _, exist :=proc.isProcessed[msg[0].Message.K]; exist {
+		return
 	}
 
-	return msg.Type
+	// TODO: process to create suitable hare message
+
+	m := proc.round0()
+	buff, err := proto.Marshal(m)
+	if err != nil {
+		return
+	}
+
+	// send message
+	proc.network.Broadcast(ProtoName, buff)
+
+
+	// mark as processed
+	proc.isProcessed[m.Message.K] = true
+}
+
+
+func (proc *ConsensusProcess) round0() *pb.HareMessage {
+	// TODO: build SVP msg
+
+	// send proposal
 }

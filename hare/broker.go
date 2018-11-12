@@ -88,7 +88,7 @@ func (broker *Broker) Inbox(layer LayerId) chan *pb.HareMessage {
 	broker.mutex.Lock()
 	defer broker.mutex.Unlock()
 
-	if _, exist := broker.outbox[layer]; !exist {
+	if _, exist := broker.outbox[layer]; !exist { // TODO: maybe we want to create a new one every time (?)
 		broker.outbox[layer] = make(chan *pb.HareMessage, InboxCapacity)
 	}
 
