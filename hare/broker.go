@@ -4,62 +4,61 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/spacemeshos/go-spacemesh/hare/pb"
 	"github.com/spacemeshos/go-spacemesh/log"
-	"github.com/spacemeshos/go-spacemesh/p2p"
 	"github.com/spacemeshos/go-spacemesh/p2p/service"
 	"sync"
 )
 
 const InboxCapacity = 100
 
-// Aborter is used to add abortability
-type Aborter struct {
-	count uint8 // the number of listeners
-	abort chan struct{}
+// Stopper is used to add stoppability to an object
+type Stopper struct {
+	count   uint8         // the number of listeners
+	channel chan struct{} // listeners listen to this channel
 }
 
-func NewAborter(abortCount uint8) *Aborter {
-	return &Aborter{abortCount, make(chan struct{})}
+func NewStopper(listenersCount uint8) *Stopper {
+	return &Stopper{listenersCount, make(chan struct{})}
 }
 
-// Aborts all listening instances
-func (aborter *Aborter) Abort() {
-	for i := uint8(0); i < aborter.count; i++ {
-		aborter.abort <- struct{}{} // signal abort
+// Stops all listening instances (should be called only once)
+func (stopper *Stopper) Stop() {
+	for i := uint8(0); i < stopper.count; i++ {
+		stopper.channel <- struct{}{} // signal listener through channel
 	}
 }
 
-// AbortChannel returns the abort channel to wait on
-func (aborter *Aborter) AbortChannel() chan struct{} {
-	return aborter.abort
+// StopChannel returns the channel channel to wait on
+func (stopper *Stopper) StopChannel() chan struct{} {
+	return stopper.channel
 }
 
 // Increment the number of listening instances
-// Should not be called after aborting
-func (aborter *Aborter) Increment() {
-	aborter.count++
+// Should not be called after Stop()
+func (stopper *Stopper) Increment() {
+	stopper.count++
 }
 
-// Broker is responsible for dispatching hare messages to the matching layer listeners
+// Broker is responsible for dispatching hare messages to the matching layer listener
 type Broker struct {
-	p2p    p2p.Service
-	inbox  chan service.Message
-	outbox map[LayerId]chan *pb.HareMessage
-	mutex  sync.Mutex
-	*Aborter
+	*Stopper
+	network NetworkService
+	inbox   chan service.Message
+	outbox  map[LayerId]chan *pb.HareMessage
+	mutex   sync.Mutex
 }
 
-func NewBroker(p2p p2p.Service) *Broker {
+func NewBroker(networkService NetworkService) *Broker {
 	p := new(Broker)
-	p.p2p = p2p
+	p.Stopper = NewStopper(1)
+	p.network = networkService
 	p.outbox = make(map[LayerId]chan *pb.HareMessage)
-	p.Aborter = NewAborter(1)
 
 	return p
 }
 
-// Start listening to protocol messages and dispatching messages
+// Start listening to protocol messages and dispatch messages
 func (broker *Broker) Start() {
-	broker.inbox = broker.p2p.RegisterProtocol(ProtoName)
+	broker.inbox = broker.network.RegisterProtocol(ProtoName)
 
 	go broker.dispatcher()
 }
@@ -77,20 +76,22 @@ func (broker *Broker) dispatcher() {
 
 			broker.outbox[LayerId(hareMsg.GetLayer())] <- hareMsg
 
-		case <-broker.AbortChannel():
+		case <-broker.StopChannel():
 			return
 		}
 	}
 }
 
-// Inbox returns the messages channel associated with the layer
+// Inbox returns the message channel associated with the given layer
 func (broker *Broker) Inbox(layer LayerId) chan *pb.HareMessage {
 	broker.mutex.Lock()
 	defer broker.mutex.Unlock()
 
-	if _, exist := broker.outbox[layer]; !exist { // TODO: maybe we want to create a new one every time (?)
-		broker.outbox[layer] = make(chan *pb.HareMessage, InboxCapacity)
+	if _, exist := broker.outbox[layer]; exist {
+		panic("Inbox called more than once per layer")
 	}
+
+	broker.outbox[layer] = make(chan *pb.HareMessage, InboxCapacity) // create new channel
 
 	return broker.outbox[layer]
 }

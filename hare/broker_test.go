@@ -51,10 +51,10 @@ func TestBroker_Abort(t *testing.T) {
 
 	timer := time.NewTimer(3 * time.Second)
 
-	go broker.Abort()
+	go broker.Stop()
 
 	select {
-	case <-broker.AbortChannel():
+	case <-broker.StopChannel():
 		assert.True(t, true)
 	case <-timer.C:
 		assert.Fail(t, "timeout")

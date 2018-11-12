@@ -23,19 +23,19 @@ type State struct {
 
 type ConsensusProcess struct {
 	State
-	*Aborter	// the consensus is abortable
+	*Stopper // the consensus is stoppable
 	layerId   LayerId
 	oracle    Rolacle // roles oracle
-	network   p2p.Service
+	network   NetworkService
 	startTime time.Time
 	inbox     chan *pb.HareMessage
 	knowledge []*pb.HareMessage
 	isProcessed map[uint32]bool // TODO: could be empty struct
 }
 
-func (proc *ConsensusProcess) NewConsensusProcess(layer LayerId, s Set, oracle Rolacle, p2p p2p.Service, broker *Broker) {
+func (proc *ConsensusProcess) NewConsensusProcess(layer LayerId, s Set, oracle Rolacle, p2p NetworkService, broker *Broker) {
 	proc.State = State{0, 0, s, nil}
-	proc.Aborter = NewAborter(2)
+	proc.Stopper = NewStopper(2)
 	proc.layerId = layer
 	proc.oracle = oracle
 	proc.network = p2p
@@ -52,7 +52,7 @@ func (proc *ConsensusProcess) Start() {
 
 func (proc *ConsensusProcess) WaitForCompletion() {
 	select {
-	case <- proc.AbortChannel():
+	case <- proc.StopChannel():
 		return
 	}
 }
@@ -68,8 +68,8 @@ func (proc *ConsensusProcess) eventLoop() {
 			proc.handleMessage(msg) // TODO: should be go handle (?)
 		case <-ticker.C:
 			proc.nextRound()
-		case <-proc.AbortChannel():
-			log.Info("Abort event loop, instance aborted")
+		case <-proc.StopChannel():
+			log.Info("Stop event loop, instance aborted")
 			return
 		}
 	}

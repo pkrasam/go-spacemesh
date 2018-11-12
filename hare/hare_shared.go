@@ -1,6 +1,7 @@
 package hare
 
 import (
+	"github.com/spacemeshos/go-spacemesh/p2p/service"
 	"time"
 )
 
@@ -18,4 +19,9 @@ type LayerId uint32 // TODO: replace with import
 
 type Byteable interface {
 	Bytes() []byte
+}
+
+type NetworkService interface {
+	RegisterProtocol(protocol string) chan service.Message
+	Broadcast(protocol string, payload []byte) error
 }
