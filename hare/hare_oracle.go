@@ -16,7 +16,7 @@ const (
 
 type Rolacle interface {
 	Role(rq RoleRequest) RoleProof
-	ValidateRole(request RoleRequest, proof RoleProof) bool
+	ValidateRole(role uint8, sig []byte) bool
 }
 
 type RoleRequest struct {
@@ -48,6 +48,14 @@ func (mockOracle *MockOracle) NewMockOracle() {
 	mockOracle.isLeaderTaken = false
 }
 
+
+
+// TODO:
+// check round
+// assign first leader OR randomly assign actives
+// keep knowledge for later
+// return result
+
 func (mockOracle *MockOracle) Role(rq RoleRequest) RoleProof {
 	i, _ := strconv.Atoi(string(rq.bytes()))
 	sha := sha1.Sum(rq.bytes())
@@ -73,7 +81,7 @@ func (mockOracle *MockOracle) Role(rq RoleRequest) RoleProof {
 	return RoleProof{role, sha[:]}
 }
 
-func (mockOracle *MockOracle) ValidateRole(request RoleRequest, proof RoleProof) bool {
+func (mockOracle *MockOracle) ValidateRole(role uint8, sig []byte) bool {
 	return true
 }
 
